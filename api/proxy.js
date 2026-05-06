@@ -1,10 +1,11 @@
-// api/proxy.js
 export const config = {
-  runtime: 'edge', // Esto lo hace funcionar como un Cloudflare Worker
+  runtime: 'edge',
+  // 1. Añadimos múltiples regiones (América, Europa, Asia, Oceanía).
+  // Esto le dice a Vercel que la función PUEDE ejecutarse en estos lugares.
+  regions: ['iad1', 'fra1', 'hnd1', 'syd1', 'gru1'],
 };
 
 export default async function handler(request) {
-  // 1. Obtener la URL de destino desde los parámetros (ej: ?url=https://google.com)
   const { searchParams } = new URL(request.url);
   const targetUrl = searchParams.get('url');
 
@@ -15,20 +16,34 @@ export default async function handler(request) {
     });
   }
 
+  // 2. Rompedor de caché (Cache-Buster): 
+  // Añadimos un parámetro aleatorio a la URL final para engañar a los servidores
+  // y forzarles a procesar la petición como si fuera totalmente nueva.
+  const urlToFetch = new URL(targetUrl);
+  urlToFetch.searchParams.append('nocache', Math.random().toString(36).substring(7));
+
   try {
-    // 2. Hacer la petición a la web de destino
-    // Aquí es donde Vercel usará una de sus IPs de salida
-    const response = await fetch(targetUrl, {
+    const response = await fetch(urlToFetch.toString(), {
       method: request.method,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        // Pasamos el User-Agent del usuario real si existe, o usamos uno por defecto
+        'User-Agent': request.headers.get('user-agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': '*/*',
+        // 3. Forzamos a que no se use ninguna caché intermedia
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
+      // 4. Evitamos mantener la conexión viva para intentar que use una conexión nueva
+      keepalive: false,
     });
 
-    // 3. Devolver la respuesta al usuario
+    // Clonamos las cabeceras de la respuesta
+    const responseHeaders = new Headers(response.headers);
+    // Le decimos a tu navegador que tampoco guarde esto en caché
+    responseHeaders.set('Cache-Control', 'no-store, max-age=0');
+
     return new Response(response.body, {
       status: response.status,
-      headers: response.headers,
+      headers: responseHeaders,
     });
   } catch (error) {
     return new Response(JSON.stringify({ error: 'Error al conectar', message: error.message }), {
